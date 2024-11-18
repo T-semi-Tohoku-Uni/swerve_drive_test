@@ -104,9 +104,9 @@ volatile uint8_t is_Share = 0, is_Options = 0, is_R3 = 0, is_L3 = 0, is_PsButton
 
 volatile int16_t vel_x = 0, vel_y = 0, omega_c = 0;
 
-volatile float k_p = 7, k_i = 0.5, k_d = 0.0001;
+volatile float k_p = 7, k_i = 0.5, k_d = 0.01;
 
-float kp = 100, ki = 4, kd = -20;
+float kp = 200, ki = 0, kd = 0;
 float max_sum_pos_err = 10000;
 float max_output_val = 10000;
 
