@@ -73,6 +73,7 @@ FDCAN_HandleTypeDef hfdcan3;
 
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
+TIM_HandleTypeDef htim16;
 
 UART_HandleTypeDef huart2;
 
@@ -125,6 +126,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_FDCAN3_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM7_Init(void);
+static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -395,6 +397,18 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 			}*/
 		}
 	}
+
+	if (&htim16 == htim) {
+		if (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC1_GPIO_Port, ADC1_Pin)){
+			robomas[0].motor_pos = 5*M_PI/6/M_PI/2*117*(-1);
+		}
+		if (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC2_GPIO_Port, ADC2_Pin)) {
+			robomas[1].motor_pos = M_PI/2/M_PI/2*117*(-1);
+		}
+		if (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC3_GPIO_Port, ADC3_Pin)) {
+			robomas[1].motor_pos = M_PI/6/M_PI/2*117*(-1);
+		}
+	}
 }
 
 int _write(int file, char *ptr, int len)
@@ -438,6 +452,7 @@ int main(void)
   MX_FDCAN3_Init();
   MX_TIM6_Init();
   MX_TIM7_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
   printf("start\r\n");
   FDCAN_motor_RxTxSettings();//Initialize fdcan3
@@ -446,6 +461,7 @@ int main(void)
   printf("can start\r\n");
   HAL_TIM_Base_Start_IT(&htim6);
   HAL_TIM_Base_Start_IT(&htim7);
+  HAL_TIM_Base_Start_IT(&htim16);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -504,6 +520,12 @@ int main(void)
 				  swervedrive_vel[i][1] = swervedrive_vel[i][1] + M_PI;
 			  }
 		  }/*gyaku_seigyo_end*/
+		  for (int i = 0; i < 3; i++) {
+			  if (swervedrive_vel[i][1] < 0) {
+				  swervedrive_vel[i][1] += M_PI;
+				  swervedrive_vel[i][0] *= -1;
+			  }
+		  }
 	  }
 
 	  printf("%f, %f, %f, ", swervedrive_vel[0][1], swervedrive_vel[1][1], swervedrive_vel[2][1]);
@@ -721,6 +743,38 @@ static void MX_TIM7_Init(void)
   /* USER CODE BEGIN TIM7_Init 2 */
 
   /* USER CODE END TIM7_Init 2 */
+
+}
+
+/**
+  * @brief TIM16 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM16_Init(void)
+{
+
+  /* USER CODE BEGIN TIM16_Init 0 */
+
+  /* USER CODE END TIM16_Init 0 */
+
+  /* USER CODE BEGIN TIM16_Init 1 */
+
+  /* USER CODE END TIM16_Init 1 */
+  htim16.Instance = TIM16;
+  htim16.Init.Prescaler = 9;
+  htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim16.Init.Period = 7999;
+  htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim16.Init.RepetitionCounter = 0;
+  htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim16) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM16_Init 2 */
+
+  /* USER CODE END TIM16_Init 2 */
 
 }
 
