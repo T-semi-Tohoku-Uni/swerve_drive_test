@@ -47,6 +47,9 @@ typedef struct{
 	volatile uint32_t last_update_time;
 	volatile float diff_pro;
 	volatile float motor_pos;
+	volatile int16_t trgVel;
+	volatile float hensa;
+	volatile float ind;
 }motor;
 /* USER CODE END PTD */
 
@@ -86,9 +89,9 @@ uint8_t TxData_motor[8] = {};
 uint8_t RxData_motor[8] = {};
 
 motor robomas[3] = {
-		{0x201, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		{0x202, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		{0x203, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		{0x201, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		{0x202, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		{0x203, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
 const float a[3] = {M_PI/6, 5*M_PI/6, 3*M_PI/2};
@@ -100,6 +103,8 @@ volatile uint8_t is_Cross = 0, is_UpRight = 0, is_DownRight = 0, is_UpLeft = 0, 
 volatile uint8_t is_Share = 0, is_Options = 0, is_R3 = 0, is_L3 = 0, is_PsButton = 0, is_Touchpad = 0;
 
 volatile int16_t vel_x = 0, vel_y = 0, omega_c = 0;
+
+volatile float k_p = 7, k_i = 0.5, k_d = 0.0001;
 
 float kp = 100, ki = 4, kd = -20;
 float max_sum_pos_err = 10000;
@@ -308,9 +313,34 @@ void FDCAN_motor_RxTxSettings(void) {
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 	if (&htim6 == htim) {
+		for (int i = 0; i < 3; i++){
+			robomas[i].hensa = robomas[i].trgVel - robomas[i].actVel;
+			if (robomas[i].hensa >= 1000) robomas[i].hensa = 1000;
+			else if (robomas[i].hensa <= -1000) robomas[i].hensa = -1000;
+			float d = (robomas[i].actVel - robomas[i].p_actVel) / 0.001;
+			robomas[i].ind += robomas[i].hensa*0.1;
+			if (d >= 30000) d = 30000;
+			else if (d <= -30000) d = -30000;
+			if (robomas[i].ind >= 10000) robomas[i].ind = 10000;
+			else if (robomas[i].ind <= -10000) robomas[i].ind = -10000;
 
 
+			float t = k_p*robomas[i].hensa;
+			if (t>=10000) t = 10000;
+			else if (t<=-10000) t = -10000;
+			robomas[i].cu = (int16_t)(t+k_i*robomas[i].ind+k_d*d);
+			if (robomas[i].cu <= -10000) robomas[i].cu = -10000;
+			else if (robomas[i].cu >= 10000) robomas[i].cu = 10000;
 
+
+			TxData_motor[i*2] = (robomas[i].cu) >> 8;
+			TxData_motor[i*2+1] = (uint8_t)((robomas[i].cu) & 0xff);
+			robomas[i].p_actVel = robomas[i].actVel;
+		}
+		if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &TxHeader_motor, TxData_motor) != HAL_OK){
+			printf("addmassage is error\r\n");
+			Error_Handler();
+		}
 	}
 
 	if (&htim7 == htim) {
@@ -357,14 +387,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
 			float d_gain = robomas[i].motor_spd * kd;
 
-			robomas[i].cu = p_gain + i_gain + d_gain;
+			robomas[i].trgVel = p_gain + i_gain + d_gain;
 /*
 			for (int i = 0; i < 3; i++) {
 				if (robomas[i].cu > 1000) robomas[i].cu = 1000;
 				if (robomas[i].cu < -1000) robomas[i].cu = -1000;
 			}*/
-			TxData_motor[i*2] = (robomas[i].cu) >> 8;
-			TxData_motor[i*2+1] = (uint8_t)((robomas[i].cu) & 0xff);
 		}
 	}
 }
@@ -478,10 +506,6 @@ int main(void)
 		  }/*gyaku_seigyo_end*/
 	  }
 
-	  if (HAL_OK != HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &TxHeader_motor, TxData_motor)){
-		  printf("addmassage is error\r\n");
-		  Error_Handler();
-	  }
 	  printf("%f, %f, %f, ", swervedrive_vel[0][1], swervedrive_vel[1][1], swervedrive_vel[2][1]);
 	  printf("%f, %f, %f\r\n", robomas[0].motor_pos*2*M_PI/117*(-1), robomas[1].motor_pos*2*M_PI/117*(-1), robomas[2].motor_pos*2*M_PI/117*(-1));
 	  HAL_Delay(10);
