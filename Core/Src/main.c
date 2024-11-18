@@ -22,22 +22,41 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct{
-	uint16_t CANID;
-	uint8_t motorID;
-	int16_t actVel;
-	double actangle;
-	int16_t actCurrent;
+	volatile uint16_t CANID;
+	volatile uint8_t motorID;
+	volatile int16_t actVel;
+	volatile int16_t p_actVel;
+	volatile int16_t actangle;
+	volatile int16_t p_actangle;
+	volatile int16_t actCurrent;
+	volatile int16_t cu;
+	volatile float motor_pos_ref;
+	volatile float motor_spd;
+	volatile float motor_spd_ref;
+	volatile float pos_err;
+	volatile float last_pos_err;
+	volatile float sum_pos_err;
+	volatile float sum_err;
+	volatile float output_val;
+	volatile uint32_t last_update_time;
+	volatile float diff_pro;
+	volatile float motor_pos;
 }motor;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define R 0.086602540378//m
+#define r 66.2//mm
 
+#define true 1;
+#define false 0;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,6 +67,9 @@ typedef struct{
 /* Private variables ---------------------------------------------------------*/
 FDCAN_HandleTypeDef hfdcan1;
 FDCAN_HandleTypeDef hfdcan3;
+
+TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim7;
 
 UART_HandleTypeDef huart2;
 
@@ -63,15 +85,30 @@ uint8_t RxData[8] = {};
 uint8_t TxData_motor[8] = {};
 uint8_t RxData_motor[8] = {};
 
-motor robomas[8] = {
-		{0x201, 1, 0, 0, 0},
-		{0x202, 2, 0, 0, 0},
-		{0x203, 3, 0, 0, 0},
-		{0x204, 4, 0, 0, 0},
-		{0x205, 5, 0, 0, 0},
-		{0x206, 6, 0, 0, 0},
-		{0x207, 7, 0, 0, 0},
-		{0x208, 8, 0, 0, 0},
+motor robomas[3] = {
+		{0x201, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		{0x202, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+		{0x203, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+};
+
+const float a[3] = {M_PI/6, 5*M_PI/6, 3*M_PI/2};
+
+volatile float vx = 0, vy = 0, omega = 0;
+
+volatile uint8_t is_Right = 0, is_Left = 0, is_Up = 0, is_Down = 0, is_Circle = 0, is_Square = 0, is_Triangle = 0;
+volatile uint8_t is_Cross = 0, is_UpRight = 0, is_DownRight = 0, is_UpLeft = 0, is_DownLeft = 0, is_R1 = 0, is_L1 = 0;
+volatile uint8_t is_Share = 0, is_Options = 0, is_R3 = 0, is_L3 = 0, is_PsButton = 0, is_Touchpad = 0;
+
+volatile int16_t vel_x = 0, vel_y = 0, omega_c = 0;
+
+float kp = 100, ki = 4, kd = -20;
+float max_sum_pos_err = 10000;
+float max_output_val = 10000;
+
+float swervedrive_vel[3][2] = {
+    {0, 0},
+    {0, 0},
+    {0, 0}
 };
 /* USER CODE END PV */
 
@@ -81,6 +118,8 @@ static void MX_GPIO_Init(void);
 static void MX_FDCAN1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_FDCAN3_Init(void);
+static void MX_TIM6_Init(void);
+static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -107,7 +146,6 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 }
 
 void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs){
-	int16_t CANID = 0;
 	if (RESET != (RxFifo1ITs & FDCAN_IT_RX_FIFO1_NEW_MESSAGE)) {
 
 	        /* Retrieve Rx messages from RX FIFO0 */
@@ -117,11 +155,74 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 			Error_Handler();
 		}
 
-		if (CANID == RxHeader.Identifier) {
-
+		if (0x300 == RxHeader.Identifier) {
+			vel_x = (int8_t)RxData[0];
+			vel_y = (int8_t)RxData[1];
+			omega_c = (uint8_t)RxData[5] - (uint8_t)RxData[4];
+			if ((RxData[6] & 0x40) == 0x40){
+				is_Right = true;
+			}
+			else {
+				is_Right = false;
+			}
+			if ((RxData[6] & 0x20) == 0x20){
+				is_Left = true;
+			}
+			else {
+				is_Left = false;
+			}
+			if ((RxData[6] & 0x10) == 0x10){
+				is_Up = true;
+			}
+			else {
+				is_Up = false;
+			}
+			if ((RxData[6] & 0x8) == 0x8){
+				is_Down = true;
+			}
+			else {
+				is_Down = false;
+			}
+		}
+		if (RxHeader.Identifier == 0x301) {
+			if ((int8_t)RxData[1] == 1) {
+				vel_x = 0;
+				vel_y = 0;
+				is_Right = false;
+				is_Left = false;
+				is_Up = false;
+				is_Down = false;
+			}
 		}
 	}
 }
+
+void cal_swerve_drive(float Theta, float Vx, float Vy, float Omega, float *V1, float *Theta1, float *V2, float *Theta2, float *V3, float *Theta3) {
+    float velocity[3][2] = {};
+    for (int i = 0; i < 3; i++){
+        velocity[i][0] = Vx - Omega*R*sin(Theta + a[i]);
+        velocity[i][1] = Vy + Omega*R*cos(Theta + a[i]);
+    }
+    /*
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 2; j++) {
+            if (0 == velocity[i][j]) {
+                velocity[i][j] = 0;
+                return 1;
+            }
+        }
+    }*/
+
+    *V1 = sqrt(pow(velocity[0][0], 2.0) + pow(velocity[0][1], 2.0));
+    *V2 = sqrt(pow(velocity[1][0], 2.0) + pow(velocity[1][1], 2.0));
+    *V3 = sqrt(pow(velocity[2][0], 2.0) + pow(velocity[2][1], 2.0));
+
+
+    *Theta1 = atan2(velocity[0][1], velocity[0][0]);
+    *Theta2 = atan2(velocity[1][1], velocity[1][0]);
+    *Theta3 = atan2(velocity[2][1], velocity[2][0]);
+}
+
 /*Initializing fdcan1*/
 void FDCAN_RxTxSettings(void){
 	FDCAN_FilterTypeDef FDCAN_Filter_settings;
@@ -205,6 +306,68 @@ void FDCAN_motor_RxTxSettings(void) {
 	}
 }
 
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+	if (&htim6 == htim) {
+
+
+
+	}
+
+	if (&htim7 == htim) {
+		for (int i = 0; i < 3; i++) {
+			robomas[i].motor_spd = (float)robomas[i].actVel / 60.0;
+
+			robomas[i].diff_pro=robomas[i].actangle - robomas[i].p_actangle;
+
+			float diff;
+			if(robomas[i].actVel >=10000){
+				diff = (robomas[i].diff_pro < 0 ? robomas[i].diff_pro + 8192 : robomas[i].diff_pro);
+			}else if(robomas[i].actVel <= -10000){
+				diff = (robomas[i].diff_pro > 0 ? robomas[i].diff_pro - 8192 : robomas[i].diff_pro);
+			}else if( robomas[i].diff_pro < 5000 && robomas[i].diff_pro > -5000){
+				diff = robomas[i].diff_pro;
+			}else if (robomas[i].diff_pro > 0){
+				diff = robomas[i].diff_pro - 8192;
+			}else
+				diff = robomas[i].diff_pro + 8192;
+
+			robomas[i].p_actangle = robomas[i].actangle;
+
+			float dt = 0.001;
+			robomas[i].motor_pos += diff/8192.0;
+			robomas[i].motor_spd = diff / 8192.0 / dt;
+
+
+			robomas[i].motor_pos_ref = -1*swervedrive_vel[i][1]/M_PI/2*117;
+
+			float p_gain = (robomas[i].motor_pos_ref - robomas[i].motor_pos) * kp;
+			robomas[i].pos_err = robomas[i].motor_pos_ref - robomas[i].motor_pos;
+			if(robomas[i].pos_err>10||robomas[i].pos_err<-10){
+				robomas[i].pos_err = 0;
+			}
+			robomas[i].sum_pos_err += robomas[i].pos_err * dt;
+			robomas[i].last_pos_err = robomas[i].pos_err;
+			if(robomas[i].sum_pos_err >= max_sum_pos_err){
+				robomas[i].sum_pos_err = max_sum_pos_err;
+					}
+					else if(robomas[i].sum_pos_err <= -max_sum_pos_err){
+						robomas[i].sum_pos_err = -max_sum_pos_err;
+					}
+			float i_gain = robomas[i].sum_pos_err * ki;
+
+			float d_gain = robomas[i].motor_spd * kd;
+
+			robomas[i].cu = p_gain + i_gain + d_gain;
+/*
+			for (int i = 0; i < 3; i++) {
+				if (robomas[i].cu > 1000) robomas[i].cu = 1000;
+				if (robomas[i].cu < -1000) robomas[i].cu = -1000;
+			}*/
+			TxData_motor[i*2] = (robomas[i].cu) >> 8;
+			TxData_motor[i*2+1] = (uint8_t)((robomas[i].cu) & 0xff);
+		}
+	}
+}
 
 int _write(int file, char *ptr, int len)
 {
@@ -245,18 +408,83 @@ int main(void)
   MX_FDCAN1_Init();
   MX_USART2_UART_Init();
   MX_FDCAN3_Init();
+  MX_TIM6_Init();
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
   printf("start\r\n");
   FDCAN_motor_RxTxSettings();//Initialize fdcan3
   printf("can_motor_start\r\n");
   FDCAN_RxTxSettings();//Initialize fdcan1
   printf("can start\r\n");
+  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_Base_Start_IT(&htim7);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  int8_t state = 1;
   while (1)
   {
+	  if (1 == state) {
+
+		  if (vel_x < 10 && vel_x > -10) {
+			  vel_x = 0;
+		  }
+		  if (vel_y < 10 && vel_y > -10) {
+			  vel_y = 0;
+		  }
+		  vx = vel_x*0.01;
+		  vy = vel_y*0.01;
+		  omega = omega_c/100;
+
+		  if (is_Right){
+			  vx += 0.1;
+		  }
+		  if (is_Left){
+			  vx -= 0.1;
+		  }
+		  if (is_Up){
+			  vy += 0.1;
+		  }
+		  if (is_Down){
+			  vy -= 0.1;
+		  }
+
+		  float p_swervedrive_vel[3][2] = {};
+		  for (int i = 0; i < 3; i++) {
+			  for (int j = 0; j < 2; j++) {
+				  p_swervedrive_vel[i][j] = swervedrive_vel[i][j];
+			  }
+		  }
+
+		  cal_swerve_drive(0, vx, vy, omega, &swervedrive_vel[0][0], &swervedrive_vel[0][1], &swervedrive_vel[1][0], &swervedrive_vel[1][1], &swervedrive_vel[2][0], &swervedrive_vel[2][1]);
+		  //seigyo hennkan
+		  /*tyokuzen_hozon*/
+		  for (int i = 0; i < 3; i++) {
+			  if (0 == swervedrive_vel[i][0]){
+				  swervedrive_vel[i][1] = p_swervedrive_vel[i][1];
+			  }
+		  }/*tyokuzen_hozon end*/
+		  /*gyaku_seigyo*/
+		  for (int i = 0; i < 3; i++) {
+			  if (swervedrive_vel[i][1] - p_swervedrive_vel[i][1] >= M_PI) {
+				  swervedrive_vel[i][0] = -swervedrive_vel[i][0];
+				  swervedrive_vel[i][1] = swervedrive_vel[i][1] - M_PI;
+			  }
+			  if (swervedrive_vel[i][1] - p_swervedrive_vel[i][1] <= -M_PI) {
+				  swervedrive_vel[i][0] = -swervedrive_vel[i][0];
+				  swervedrive_vel[i][1] = swervedrive_vel[i][1] + M_PI;
+			  }
+		  }/*gyaku_seigyo_end*/
+	  }
+
+	  if (HAL_OK != HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &TxHeader_motor, TxData_motor)){
+		  printf("addmassage is error\r\n");
+		  Error_Handler();
+	  }
+	  printf("%f, %f, %f, ", swervedrive_vel[0][1], swervedrive_vel[1][1], swervedrive_vel[2][1]);
+	  printf("%f, %f, %f\r\n", robomas[0].motor_pos*2*M_PI/117*(-1), robomas[1].motor_pos*2*M_PI/117*(-1), robomas[2].motor_pos*2*M_PI/117*(-1));
+	  HAL_Delay(10);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -397,6 +625,82 @@ static void MX_FDCAN3_Init(void)
 }
 
 /**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 99;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 7999;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * @brief TIM7 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM7_Init(void)
+{
+
+  /* USER CODE BEGIN TIM7_Init 0 */
+
+  /* USER CODE END TIM7_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM7_Init 1 */
+
+  /* USER CODE END TIM7_Init 1 */
+  htim7.Instance = TIM7;
+  htim7.Init.Prescaler = 9;
+  htim7.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim7.Init.Period = 7999;
+  htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim7, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM7_Init 2 */
+
+  /* USER CODE END TIM7_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -456,11 +760,24 @@ static void MX_GPIO_Init(void)
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(Board_LED_GPIO_Port, Board_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : ADC3_Pin */
+  GPIO_InitStruct.Pin = ADC3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(ADC3_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : ADC1_Pin ADC2_Pin */
+  GPIO_InitStruct.Pin = ADC1_Pin|ADC2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : Board_LED_Pin */
   GPIO_InitStruct.Pin = Board_LED_Pin;
