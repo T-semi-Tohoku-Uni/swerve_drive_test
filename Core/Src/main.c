@@ -399,14 +399,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 	}
 
 	if (&htim16 == htim) {
-		if (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC1_GPIO_Port, ADC1_Pin)){
+		if (GPIO_PIN_SET == HAL_GPIO_ReadPin(ADC1_GPIO_Port, ADC1_Pin)){
 			robomas[0].motor_pos = 5*M_PI/6/M_PI/2*117*(-1);
 		}
-		if (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC2_GPIO_Port, ADC2_Pin)) {
+		if (GPIO_PIN_SET == HAL_GPIO_ReadPin(ADC2_GPIO_Port, ADC2_Pin)) {
 			robomas[1].motor_pos = M_PI/2/M_PI/2*117*(-1);
 		}
-		if (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC3_GPIO_Port, ADC3_Pin)) {
-			robomas[1].motor_pos = M_PI/6/M_PI/2*117*(-1);
+		if (GPIO_PIN_SET == HAL_GPIO_ReadPin(ADC3_GPIO_Port, ADC3_Pin)) {
+			robomas[2].motor_pos = M_PI/6/M_PI/2*117*(-1);
 		}
 	}
 }
@@ -460,6 +460,18 @@ int main(void)
   FDCAN_RxTxSettings();//Initialize fdcan1
   printf("can start\r\n");
   HAL_TIM_Base_Start_IT(&htim6);
+  while (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC1_GPIO_Port, ADC1_Pin)) {
+	  robomas[0].trgVel = 100*36;
+  }
+  robomas[0].trgVel = 0;
+  while (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC2_GPIO_Port, ADC2_Pin)) {
+	  robomas[1].trgVel = 100*36;
+  }
+  robomas[1].trgVel = 0;
+  while (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC3_GPIO_Port, ADC3_Pin)) {
+	  robomas[2].trgVel = 100*36;
+  }
+  robomas[2].trgVel = 0;
   HAL_TIM_Base_Start_IT(&htim7);
   HAL_TIM_Base_Start_IT(&htim16);
   /* USER CODE END 2 */
