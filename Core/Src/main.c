@@ -55,11 +55,12 @@ typedef struct{
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define R 0.086602540378//m
+//#define R 0.086602540378//m test
+#define R 0.317542648//m honban
 #define r 66.2//mm
 
-#define true 1;
-#define false 0;
+#define true 1
+#define false 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -460,6 +461,8 @@ int main(void)
   FDCAN_RxTxSettings();//Initialize fdcan1
   printf("can start\r\n");
   HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_Base_Start_IT(&htim16);
+  /*
   while (GPIO_PIN_RESET == HAL_GPIO_ReadPin(ADC1_GPIO_Port, ADC1_Pin)) {
 	  robomas[0].trgVel = 100*36;
   }
@@ -472,8 +475,14 @@ int main(void)
 	  robomas[2].trgVel = 100*36;
   }
   robomas[2].trgVel = 0;
+  */
   HAL_TIM_Base_Start_IT(&htim7);
-  HAL_TIM_Base_Start_IT(&htim16);
+  for (int i = 0; i < 3; i++) {
+	  swervedrive_vel[i][1] = -M_PI;
+	  HAL_Delay(1000);
+	  swervedrive_vel[i][1] = M_PI;
+	  HAL_Delay(1000);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
